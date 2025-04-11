@@ -19,6 +19,61 @@ char clue[MAX2];
 int value;
 }Treasure;
 
+char *creat_time(){
+time_t now=time(NULL);
+struct tm *t=localtime(&now);
+
+char*buffer=(char*)malloc(50);
+if(buffer==NULL){
+printf("eroare la alocare memorie\n");
+exit(1);
+}
+sprintf(buffer,"[%04d-%02d-%02d %02d:%02d:%02d]",t->tm_year+1900,t->tm_mon+1,t->tm_mday,t->tm_hour,t->tm_min,t->tm_sec);
+return buffer;
+}
+void log_operation(const char *hunt_id,const char *op){
+char *path=(char*)malloc(strlen(hunt_id)+strlen("/logged_hunt")+4);
+if(path==NULL){
+perror("malloc path");
+exit(1);
+}
+sprintf(path,"./%s/logged_hunt",hunt_id);
+
+int fd=open(path,O_WRONLY|O_CREAT|O_APPEND,0666);
+if(fd==-1){
+perror("eroare open log");
+free(path);
+exit(1);
+}
+char *buffer=creat_time();
+if(buffer==NULL){
+perror("eroare alocare buffer");
+free(path);
+close(fd);
+exit(1);
+}
+dprintf(fd,"%s %s\n",buffer,op);
+free(buffer);
+close(fd);
+
+char *symlink_name=(char*)malloc(strlen("logged_hunt-")+strlen(hunt_id)+1);
+if(symlink_name==NULL){
+perror("eroare malloc");
+free(path);
+exit(1);
+}
+sprintf(symlink_name,"logged_hunt-%s",hunt_id);
+
+unlink(symlink_name);
+if(symlink(path,symlink_name)==1){
+if(errno!=EEXIST){
+perror("symlink");
+}
+}
+free(symlink_name);
+free(path);
+}
+
 void add_treasure(const char *hunt_id){
 
 char *directory_path=(char*)malloc(strlen(hunt_id)+3);
@@ -85,6 +140,17 @@ exit(0);
 }
 close(fd);
 printf("Comoara adaugata cu succes in hunt '%s'\n",hunt_id);
+char *message=(char*)malloc(strlen("Added: ")+strlen(hunt_id)+2);
+if(message==NULL){
+perror("eroare alocare mesaj");
+free(directory_path);
+free(file_path);
+exit(1);
+}else{
+sprintf(message,"Added %s",hunt_id);
+log_operation(hunt_id,message);
+free(message);
+}
 free(directory_path);
 free(file_path);
 }
@@ -127,6 +193,16 @@ printf("Value: %d\n",t.value);
 printf("______________________________________________\n");
 }
 close(fd);
+
+char *message=(char*)malloc(strlen("Listed hunt: ")+strlen(hunt_id)+2);
+if(message==NULL){
+perror("malloc message list");
+free(file_path);
+exit(1);
+}
+sprintf(message,"Listed hunt: %s",hunt_id);
+log_operation(hunt_id,message);
+free(message);
 free(file_path);
 }
 
@@ -165,6 +241,16 @@ if(!found){
 printf("Treasure %s not found in hunt '%s'\n",id_treasure,hunt_id);
 }
 close(fd);
+char *message=(char*)malloc(strlen("View: ")+strlen(hunt_id)+strlen(id_treasure)+2);
+if(message==NULL){
+perror("eroare alocare mesaj");
+free(file_path);
+exit(1);
+}else{
+sprintf(message,"View: %s %s",hunt_id,id_treasure);
+log_operation(hunt_id,message);
+free(message);
+}
 free(file_path);
 }
 
@@ -236,6 +322,17 @@ exit(1);
 }
 
 printf("Treasure %s removed from hunt '%s'\n",treasure,hunt_id);
+char *message=(char*)malloc(strlen("removed treasure: ")+strlen(hunt_id)+strlen(treasure)+3);
+if(message==NULL){
+perror("eroare alocare mesaj");
+free(file_path);
+free(temporary_path);
+exit(1);
+}else{
+sprintf(message,"removed tresure: %s %s",hunt_id,treasure);
+log_operation(hunt_id,message);
+free(message);
+}
 free(file_path);
 free(temporary_path);
 }
@@ -276,6 +373,17 @@ free(folder);
 exit(1);
 }
 printf("Hunt '%s' removed\n",hunt_id);
+char *message=(char*)malloc(strlen("Removed hunt: ")+strlen(hunt_id)+2);
+if(message==NULL){
+perror("eroare alocare mesaj");
+free(file_path);
+free(folder);
+exit(1);
+}else{
+sprintf(message,"Removed hunt: %s",hunt_id);
+log_operation(hunt_id,message);
+free(message);
+}
 free(file_path);
 free(folder);
 }
