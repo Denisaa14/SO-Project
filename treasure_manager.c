@@ -5,24 +5,18 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <dirent.h>
 #include <time.h>
+#include "treasure_manager.h"
 
-#define MAX1 100
-#define MAX2 256
-
-typedef struct{
-char treasure_id[MAX1];
-char username[MAX1];
-float latitude;
-float longitude;
-char clue[MAX2];
-int value;
-}Treasure;
 
 char *creat_time(){
 time_t now=time(NULL);
 struct tm *t=localtime(&now);
-
+if(t==NULL){
+perror("localtime");
+exit(1);
+}
 char*buffer=(char*)malloc(50);
 if(buffer==NULL){
 printf("eroare la alocare memorie\n");
@@ -31,6 +25,21 @@ exit(1);
 sprintf(buffer,"[%04d-%02d-%02d %02d:%02d:%02d]",t->tm_year+1900,t->tm_mon+1,t->tm_mday,t->tm_hour,t->tm_min,t->tm_sec);
 return buffer;
 }
+
+void notify_monitor(){
+int fd = open("/tmp/hub_monitor_fifo", O_WRONLY);
+
+if (fd == -1) {if(errno==ENXIO){
+fprintf(stderr,"Monitorul nu este pornit\n");
+return;
+}
+    perror("Nu pot deschide FIFO pentru scriere");
+    return;
+}
+write(fd,"updated\n",8);
+close(fd);
+}
+
 void log_operation(const char *hunt_id,const char *op){
 char *path=(char*)malloc(strlen(hunt_id)+strlen("/logged_hunt")+4);
 if(path==NULL){
@@ -65,7 +74,7 @@ exit(1);
 sprintf(symlink_name,"logged_hunt-%s",hunt_id);
 
 unlink(symlink_name);
-if(symlink(path,symlink_name)==1){
+if(symlink(path,symlink_name)==-1){
 if(errno!=EEXIST){
 perror("symlink");
 }
@@ -73,7 +82,6 @@ perror("symlink");
 free(symlink_name);
 free(path);
 }
-
 void add_treasure(const char *hunt_id){
 
 char *directory_path=(char*)malloc(strlen(hunt_id)+3);
@@ -149,6 +157,7 @@ exit(1);
 }else{
 sprintf(message,"Added %s",hunt_id);
 log_operation(hunt_id,message);
+notify_monitor();
 free(message);
 }
 free(directory_path);
@@ -157,7 +166,7 @@ free(file_path);
 
 void list_treasure(const char *hunt_id){
 
-char *file_path=(char*)malloc(strlen(hunt_id)+strlen("/treasures.bin")+4);
+char *file_path=(char*)malloc(strlen(hunt_id)+strlen("/treasures.bin")+2);
 if(file_path==NULL){
 perror("Error: file path in list");
 exit(1);
@@ -202,6 +211,7 @@ exit(1);
 }
 sprintf(message,"Listed hunt: %s",hunt_id);
 log_operation(hunt_id,message);
+notify_monitor();
 free(message);
 free(file_path);
 }
@@ -231,7 +241,7 @@ printf("Treasure: \n");
 printf("------------------------------------------\n");
 printf("Treasure id: %s\n",t.treasure_id);
 printf("User name: %s\n",t.username);
-printf("Location: %.6f, %6.f\n",t.latitude,t.longitude);
+printf("Location: %.6f, %.6f\n",t.latitude,t.longitude);
 printf("Clue: %s\n",t.clue);
 printf("Value: %d\n",t.value);
 break;
@@ -249,6 +259,7 @@ exit(1);
 }else{
 sprintf(message,"View: %s %s",hunt_id,id_treasure);
 log_operation(hunt_id,message);
+notify_monitor();
 free(message);
 }
 free(file_path);
@@ -296,7 +307,12 @@ if(strcmp(t.treasure_id,treasure)==0){
 rem=1;
 continue;
 }
-write(g,&t,sizeof(Treasure));
+if(write(g,&t,sizeof(Treasure))!=sizeof(Treasure)){
+perror("Eroare la scriere in temporary file");
+close(f);close(g);
+free(file_path);free(temporary_path);
+exit(1);
+}
 }
 close(f);
 close(g);
@@ -329,8 +345,9 @@ free(file_path);
 free(temporary_path);
 exit(1);
 }else{
-sprintf(message,"removed tresure: %s %s",hunt_id,treasure);
+sprintf(message,"removed treasure: %s %s",hunt_id,treasure);
 log_operation(hunt_id,message);
+notify_monitor();
 free(message);
 }
 free(file_path);
@@ -382,58 +399,9 @@ exit(1);
 }else{
 sprintf(message,"Removed hunt: %s",hunt_id);
 log_operation(hunt_id,message);
+notify_monitor();
 free(message);
 }
 free(file_path);
 free(folder);
-}
-
-int main(int argc,char* argv[]){
-if(argc<2){
-printf("Usage:\n");
-printf("%s --add <hunt_id>",argv[0]);
-printf("%s --list <hunt_id>",argv[0]);
-printf("%s --view <hunt_id> <id>",argv[0]);
-printf("%s --remove_treasure <hunt_id> <id>",argv[0]);
-printf("%s --remove_hunt <hunt_id>",argv[0]);
-return 1;
-}
-
-if(strcmp(argv[1],"--add")==0){
-if(argc!=3){
-printf("Usage: %s --add <hunt_id>\n",argv[0]);
-return 1;
-}
-add_treasure(argv[2]);
-}else if(strcmp(argv[1],"--list")==0){
-if(argc!=3){
-printf("Usage: %s --list <hunt_id>\n",argv[0]);
-return 1;
-}
-list_treasure(argv[2]);
-}
-else if(strcmp(argv[1],"--view")==0){
-if(argc!=4){
-printf("Usage: %s --view <hunt_id> <treasure_id>\n",argv[0]);
-return 1;
-}
-view_treasure(argv[2],argv[3]);
-}else if(strcmp(argv[1],"--remove")==0){
-if(argc!=4){
-printf("Usage: %s --remove <hunt_id> <treasure_id>\n",argv[0]);
-return 1;
-}
-remove_treasure(argv[2],argv[3]);
-}else if(strcmp(argv[1],"--remove_hunt")==0){
-if(argc!=3){
-printf("Usage: %s --remove_hunt <hunt_id>\n",argv[0]);
-return 1;
-}
-remove_hunt(argv[2]);
-}else{
-printf("Error:unknown command: %s\n",argv[1]);
-return 1;
-}
-
-return 0;
 }
