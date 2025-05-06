@@ -8,123 +8,99 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <dirent.h>
-#include "treasure_manager.h"
+#include <time.h>
 
-#define FIFO_PATH "/tmp/hub_monitor_fifo"
-
+#define MAX1 100
+#define MAX2 256
 pid_t monitor_pid=-1;
 int monitor_running=0;
 int monitor_stopping=0;
 
-void list_hunts();
-void list_treasure(const char *);
-void view_treasure(const char *,const char *);
 
-void handle_sigterm(int sig){
-printf("[Monitor] Primit SIGTERM si se inchide in 2 secunde\n");
-usleep(2000000);
-unlink(FIFO_PATH);
-exit(0);
+typedef struct{
+char treasure_id[MAX1];
+char username[MAX1];
+float latitude;
+float longitude;
+char clue[MAX2];
+int value;
+}Treasure;
+
+void log_operation(const char *hunt_id,const char *msg){
+printf("[Log] %s: %s\n",hunt_id,msg);
 }
+//Functie view_treasure -> Vizualizeaza comoara
+void view_treasure(const char *hunt_id,const char *id_treasure){
 
-void handle_sigchld(int sig){
-int status;
-waitpid(monitor_pid,&status,WNOHANG);
-monitor_running=0;
-monitor_stopping=0;
-monitor_pid=-1;
-printf("\nMonitorul s-a inchis\n");
-}
+char file_path[512];
+sprintf(file_path,"./%s/treasures.bin",hunt_id);
 
-void handle_sigusr1(int sig){
-
-int fd = open(FIFO_PATH, O_RDONLY | O_NONBLOCK);
-
+int fd=open(file_path,O_RDONLY);
 if(fd==-1){
-perror("[Monitor] Nu se poate deschide FIFO pentru citire in handler");
-return;
-}
-
-char buffer[256];
-ssize_t len=read(fd,buffer,sizeof(buffer)-1);
-if(len<=0){
-close(fd);
-return;
-}
-buffer[len]='\0';
-buffer[strcspn(buffer,"\r\n")]='\0';
-close(fd);
-
-printf("[Monitor] Comanda primita: %s\n",buffer);
-
-if(strncmp(buffer,"list_hunts",10)==0){
-list_hunts();
-}else if(strncmp(buffer,"list ",5)==0){
-list_treasure(buffer+5);
-}else if(strncmp(buffer,"view ",5)==0){
-char *rest=buffer+5;
-printf("[Monitor] Comanda primita: %s\n",buffer);
-char *hunt_id=strtok(rest," ");
-char *treasure_id=strtok(NULL," ");
-
-printf("[Monitor Hunt id: %s, Treasure Id: %s\n",hunt_id,treasure_id);
-if(hunt_id && treasure_id && strtok(NULL," ")==NULL){
-view_treasure(hunt_id,treasure_id);
-}else{
-printf("[Monitor] Comanda view incorecta\n");
-}
-}else{
-printf("[Monitor] Comanda nerecunoscuta\n");
-}
-}
-
-void start_monitor(){
-
-if(monitor_running){
-printf("Monitorul ruleaza deja\n");
-return;
-}
-
-if(mkfifo(FIFO_PATH,0666)==-1 && errno!=EEXIST){
-perror("Eroare la creare FIFO\n");
+perror("error: file open");
 exit(1);
 }
 
-monitor_pid=fork();
-if(monitor_pid<0){
-perror("Eroare la fork pentru monitor");
+Treasure t;
+int found=0;
+while(read(fd,&t,sizeof(Treasure))==sizeof(Treasure)){
+if(strcmp(t.treasure_id,id_treasure)==0){
+found=1;
+printf("Treasure: \n");
+printf("------------------------------------------\n");
+printf("Treasure id: %s\n",t.treasure_id);
+printf("User name: %s\n",t.username);
+printf("Location: %.6f, %.6f\n",t.latitude,t.longitude);
+printf("Clue: %s\n",t.clue);
+printf("Value: %d\n",t.value);
+break;
+}
+}
+if(!found){
+printf("Treasure %s not found in hunt '%s'\n",id_treasure,hunt_id);
+}
+close(fd);
+char message[512];
+sprintf(message,"View: %s %s",hunt_id,id_treasure);
+log_operation(hunt_id,message);
+}
+
+//Functie list_treasure ->listeaza comoara
+void list_treasure(const char *hunt_id){
+
+char file_path[512];
+sprintf(file_path,"./%s/treasures.bin",hunt_id);
+
+struct stat st;
+if(stat(file_path,&st)==-1){
+perror("error: if from stat");
 exit(1);
 }
 
-if(monitor_pid==0){
-signal(SIGUSR1,handle_sigusr1);
-signal(SIGTERM,handle_sigterm);
+printf("Hunt id: %s\n",hunt_id);
+printf("File size: %ld bytes\n",st.st_size);
+printf("Last modified: %s",ctime(&st.st_mtime));
 
-printf("[Monitor] Monitor pornit cu PID %d\n",getpid());
-int dummy_fd = open(FIFO_PATH, O_RDONLY | O_NONBLOCK);
-if (dummy_fd == -1) {
-    perror("[Monitor] Nu pot deschide FIFO in mod pasiv");
-    exit(1);
-}
-
-while(1) pause();
-exit(0);
-}else{
-printf("Monitor pornit cu PID: %d\n",monitor_pid);
-monitor_running=1;
-monitor_stopping=0;
-}
+int fd=open(file_path,O_RDONLY);
+if(fd==-1){
+perror("error: open file");
+exit(1);
 }
 
-void stop_monitor(){
-if(monitor_pid>0 && monitor_running){
-kill(monitor_pid,SIGTERM);
-printf("Asteptam terminarea monitorului\n");
-monitor_stopping=1;
-}else{
-printf("Monitorul nu ruleaza\n");
+Treasure t;
+printf("\nList of treasures:\n");
+while(read(fd,&t,sizeof(Treasure))==sizeof(Treasure)){
+printf("Treasure id: %s\n",t.treasure_id);
+printf("User name: %s\n",t.username);
+printf("Location: %.6f, %.6f\n",t.latitude,t.longitude);
+printf("Clue: %s\n",t.clue);
+printf("Value: %d\n",t.value);
+printf("______________________________________________\n");
 }
+close(fd);
+
 }
+
 
 void list_hunts(){
 DIR *dir=opendir(".");
@@ -153,23 +129,114 @@ printf("[Monitor] Hunt: %s | %d hunts\n",entry->d_name,count);
 }
 closedir(dir);
 }
+// MONITOR: 
 
-void send_command_to_monitor(const char *command){
+void handle_sigusr1(int sgn) {
+ char buffer[256] = { 0 };
+    int file = open("command.txt", O_RDONLY);
+    if (file == -1) {
+        perror("error opening the file");
+        return;
+    }
+    read(file,buffer,sizeof(buffer));
+    close(file);
+    
+    char *command=strtok(buffer," \n");
+    if(strcmp(command,"list_hunts")==0){
+    list_hunts();
+    }else if(strcmp(command,"list")==0){
+    char *hunt=strtok(NULL," \n");
+    if(hunt) {list_treasure(hunt);}
+    else {printf("[Monitor] lipseste hunt_id\n");}
+    }else if(strcmp(command,"view")==0){
+    char *hunt=strtok(NULL," \n");
+    char *trID=strtok(NULL," \n");
+    if(hunt && trID) { view_treasure(hunt,trID);}
+    else{printf("[Monitor] lipsesc parametri pentru view\n");}
+    }
+    fflush(stdout);
+}
+void handle_sigusr2(int sgn){
+printf("[Monitor] se opreste\n");
+fflush(stdout);
+usleep(2000000);
+exit(0);
+}
+
+void handle_sigchld(int sgn){
+waitpid(monitor_pid,NULL,0);
+monitor_running=0;
+monitor_pid=-1;
+monitor_stopping=0;
+printf("Monitor oprit\n");
+fflush(stdout);
+}
+
+//Functia start monitor
+void start_monitor() {
+    if (monitor_running) {
+     printf("Monitorul ruleaza deja\n");
+     return;
+    }
+
+    int pid = fork();
+    if (pid < 0) {
+        perror("eroare la fork!");
+        exit(1);
+    }
+    else if (pid == 0) {
+   struct sigaction sa1={.sa_handler=handle_sigusr1};
+   sigemptyset(&sa1.sa_mask);
+   sa1.sa_flags=0;
+   sigaction(SIGUSR1,&sa1,NULL);
+   
+   struct sigaction sa2={.sa_handler=handle_sigusr2};
+   sigemptyset(&sa2.sa_mask);
+   sa2.sa_flags=0;
+   sigaction(SIGUSR2,&sa2,NULL);
+    while(1) pause();
+        }else{
+        monitor_pid=pid;
+        monitor_running=1;
+        printf("Monitor pornit cu PID: %d\n",pid);
+        }
+}
+
+
+//Functia stop monitor
+void stop_monitor() {
+   if(!monitor_running){
+   printf("Monitorul nu este pornit\n");
+   return;
+   }
+   struct sigaction sa={.sa_handler=handle_sigchld};
+   sigemptyset(&sa.sa_mask);
+   sa.sa_flags=0;
+   sigaction(SIGCHLD,&sa,NULL);
+   
+   monitor_stopping=1;
+   kill(monitor_pid,SIGUSR2);
+}
+//Trimite comenziile monitorului
+void send_command(const char *command){
+
 if(!monitor_running){
 printf("Monitorul nu ruleaza\n");
 return;
 }
-
-int fd=open(FIFO_PATH,O_WRONLY);
-if(fd==-1){
-perror("Eroare la deschidere FIFO pentru scriere");
+int file=open("command.txt",O_WRONLY | O_CREAT | O_TRUNC,0644);
+if(file==-1){
+perror("Eroare la scriere comenzii");
 return;
 }
+write(file,command,strlen(command));
+close(file);
 
-write(fd,command,strlen(command));
-close(fd);
 kill(monitor_pid,SIGUSR1);
+
 }
+
+//Printeaza meniul aplicatiei
 void print_menu(){
 
 printf("\nComenzi disponibile:\n");
@@ -179,11 +246,6 @@ printf("stop_monitor  -> Opreste monitorul\n");
 printf("list_hunts    -> Listeaza hunt-urile si numarul lor\n");
 printf("list <hunt_id> -> Listeaza toate comorile \n");
 printf("view <hunt_id> <treasure_id> -> Afiseaza detaliile despre o comoara\n");
-printf("\n Gestionarea comorilor \n");
-printf("add <hunt_id>  -> Adauga o comoara noua\n");
-printf("remove_treasure <hunt_id> <treasure_id> ->Sterge o comoara\n");
-printf("remove_hunt <hunt_id> -> Sterge complet o vanatoare\n");
-
 printf("\n Alte comenzi \n");
 printf("help -> Afiseaza meniul de comenzi  de terminal\n");
 printf("exit -> Iesire din aplicatie\n");
@@ -192,64 +254,39 @@ printf("exit -> Iesire din aplicatie\n");
 
 int main(){
 
-struct sigaction sa;
-sa.sa_handler=handle_sigchld;
-sigemptyset(&sa.sa_mask);
-sa.sa_flags=SA_RESTART;
-sigaction(SIGCHLD,&sa,NULL);
-
 char command[256];
+struct sigaction sa = {.sa_handler = handle_sigchld};
+sigemptyset(&sa.sa_mask);
+sa.sa_flags = 0;
+sigaction(SIGCHLD, &sa, NULL);
 print_menu();
+
 while(1){
 printf("treasure_hub> ");
-if(fgets(command,sizeof(command),stdin)==NULL){
-continue;
-}
+if(!fgets(command,sizeof(command),stdin))continue;
 command[strcspn(command,"\n")]='\0';
 
 if(monitor_stopping){
-printf("Monitorul se opreste \n");
+printf("Asteapta oprirea monitorului\n");
 continue;
 }
-
 if(strcmp(command,"exit")==0){
-if(monitor_running){
-printf("Monitorul inca ruleaza, inchideti cu stop_monitor");
-}else{
-break;
-}
-}else if(strcmp(command,"help")==0)
-{print_menu();
+if(monitor_running)
+   printf("Monitorul inca ruleaza,Opreste cu stop_monitor");
+   else break;
+}else if(strcmp(command,"help")==0){
+print_menu();
 }else if(strcmp(command,"start_monitor")==0){
 start_monitor();
 }else if(strcmp(command,"stop_monitor")==0){
 stop_monitor();
+}else if(strncmp(command,"list",4)==0 || strncmp(command,"view",4)==0){
+send_command(command);
 }else if(strcmp(command,"list_hunts")==0){
-send_command_to_monitor("list_hunts\n");
-}else if(strncmp(command,"list ",5)==0){
-send_command_to_monitor(command);
-}else if(strncmp(command,"view ",5)==0){
-send_command_to_monitor(command);
-}else if(strncmp(command,"add ",4)==0){
-char *hunt_id=command+4;
-add_treasure(hunt_id);
-}else if(strncmp(command,"remove_treasure ",16)==0){
-char *rez=command+16;
-char *hunt_id=strtok(rez," ");
-char *treasure_id=strtok(NULL," ");
-if(hunt_id && treasure_id){
-remove_treasure(hunt_id,treasure_id);
+send_command(command);
 }else{
-printf("[Monitor] remove_treasure <hunt_id> <treasure_id> incorect\n");
-}
-}else if(strncmp(command,"remove_hunt ",12)==0)
-{
-char *hunt_id=command+12;
-remove_hunt(hunt_id);
-}else{
-printf("Comanda necunoscuta: %s\n",command);
+printf("Comanda nerecunoascuta\n");
 }
 }
-
 return 0;
 }
