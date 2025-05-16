@@ -18,6 +18,6 @@ void list_treasure(const char *hunt_id);
 void view_treasure(const char *hunt_id,const char *treasure_id);
 void remove_treasure(const char *hunt_id,const char *treasure_id);
 void remove_hunt(const char *hunt_id);
-void notify_monitor();
+void log_operation(const char*hunt_id,const char *op);
 
 #endif
