@@ -7,9 +7,21 @@
 #include <errno.h>
 #include <dirent.h>
 #include <time.h>
-#include "treasure_manager.h"
 
+#define MAX1 100
+#define MAX2 256 
+#define TREASURE_FILE "treasures.bin"
+#define LOG_FILE "logged_hunt"
+typedef struct {
+    char treasure_id[100];
+    char username[100];
+    float latitude;
+    float longitude;
+    char clue[256];
+    int value;
+} Treasure;
 
+//Functie pentru a crea un timestamp
 char *creat_time(){
 time_t now=time(NULL);
 struct tm *t=localtime(&now);
@@ -19,45 +31,26 @@ exit(1);
 }
 char*buffer=(char*)malloc(50);
 if(buffer==NULL){
-printf("eroare la alocare memorie\n");
+perror("eroare la alocare memorie\n");
 exit(1);
 }
 sprintf(buffer,"[%04d-%02d-%02d %02d:%02d:%02d]",t->tm_year+1900,t->tm_mon+1,t->tm_mday,t->tm_hour,t->tm_min,t->tm_sec);
 return buffer;
 }
 
-void notify_monitor(){
-int fd = open("/tmp/hub_monitor_fifo", O_WRONLY);
-
-if (fd == -1) {if(errno==ENXIO){
-fprintf(stderr,"Monitorul nu este pornit\n");
-return;
-}
-    perror("Nu pot deschide FIFO pentru scriere");
-    return;
-}
-write(fd,"updated\n",8);
-close(fd);
-}
-
+//Logheaza o operatiune in fisierul corespunzator
 void log_operation(const char *hunt_id,const char *op){
-char *path=(char*)malloc(strlen(hunt_id)+strlen("/logged_hunt")+4);
-if(path==NULL){
-perror("malloc path");
-exit(1);
-}
-sprintf(path,"./%s/logged_hunt",hunt_id);
+char path[256];
+snprintf(path,sizeof(path),"./%s/%s",hunt_id,LOG_FILE);
 
 int fd=open(path,O_WRONLY|O_CREAT|O_APPEND,0666);
 if(fd==-1){
 perror("eroare open log");
-free(path);
 exit(1);
 }
 char *buffer=creat_time();
 if(buffer==NULL){
 perror("eroare alocare buffer");
-free(path);
 close(fd);
 exit(1);
 }
@@ -65,52 +58,29 @@ dprintf(fd,"%s %s\n",buffer,op);
 free(buffer);
 close(fd);
 
-char *symlink_name=(char*)malloc(strlen("logged_hunt-")+strlen(hunt_id)+1);
-if(symlink_name==NULL){
-perror("eroare malloc");
-free(path);
-exit(1);
+char symlink_name[256];
+snprintf(symlink_name,sizeof(symlink_name),"%s-%s",LOG_FILE,hunt_id);
+unlink(symlink_name); //sterge link ul vechi
+symlink(path,symlink_name);//creeaza un nou link
 }
-sprintf(symlink_name,"logged_hunt-%s",hunt_id);
 
-unlink(symlink_name);
-if(symlink(path,symlink_name)==-1){
-if(errno!=EEXIST){
-perror("symlink");
-}
-}
-free(symlink_name);
-free(path);
-}
+//Adauga o comoara intr un hunt
 void add_treasure(const char *hunt_id){
 
-char *directory_path=(char*)malloc(strlen(hunt_id)+3);
-if(directory_path==NULL){
-perror("Error:malloc directory_path");
-exit(1);
-}
-sprintf(directory_path,"./%s",hunt_id);
+char directory_path[256];
+snprintf(directory_path,sizeof(directory_path),"./%s",hunt_id);
 
-char *file_path=malloc(strlen(directory_path)+strlen("/treasures.bin")+1);
-if(file_path==NULL){
-perror("Error:malloc fille path");
-free(directory_path);
-exit(1);
-}
-sprintf(file_path,"%s/treasures.bin",directory_path);
+char file_path[256];
+snprintf(file_path,sizeof(file_path),"%s/%s",directory_path,TREASURE_FILE);
 
 if(mkdir(directory_path,0777)==-1 && errno!=EEXIST){
 perror("error:mkdir");
-free(directory_path);
-free(file_path);
 exit(1);
 }
 
 int fd=open(file_path,O_WRONLY | O_CREAT|O_APPEND,0666);
 if(fd==-1){
 perror("error:file");
-free(directory_path);
-free(file_path);
 exit(1);
 }
 
@@ -142,41 +112,24 @@ sscanf(buffer,"%d",&t.value);
 if(write(fd,&t,sizeof(Treasure))==-1){
 perror("Error:write treasure");
 close(fd);
-free(directory_path);
-free(file_path);
 exit(0);
 }
 close(fd);
 printf("Comoara adaugata cu succes in hunt '%s'\n",hunt_id);
-char *message=(char*)malloc(strlen("Added: ")+strlen(hunt_id)+2);
-if(message==NULL){
-perror("eroare alocare mesaj");
-free(directory_path);
-free(file_path);
-exit(1);
-}else{
-sprintf(message,"Added %s",hunt_id);
+char message[256];
+snprintf(message,sizeof(message),"Added: %s",t.treasure_id);
 log_operation(hunt_id,message);
-notify_monitor();
-free(message);
-}
-free(directory_path);
-free(file_path);
 }
 
+//Listeaza toate comorile dintr-un hunt
 void list_treasure(const char *hunt_id){
 
-char *file_path=(char*)malloc(strlen(hunt_id)+strlen("/treasures.bin")+2);
-if(file_path==NULL){
-perror("Error: file path in list");
-exit(1);
-}
-sprintf(file_path,"./%s/treasures.bin",hunt_id);
+char file_path[256];
+snprintf(file_path,sizeof(file_path),"./%s/%s",hunt_id,TREASURE_FILE);
 
 struct stat st;
 if(stat(file_path,&st)==-1){
 perror("error: if from stat");
-free(file_path);
 exit(1);
 }
 
@@ -187,7 +140,6 @@ printf("Last modified: %s",ctime(&st.st_mtime));
 int fd=open(file_path,O_RDONLY);
 if(fd==-1){
 perror("error: open file");
-free(file_path);
 exit(1);
 }
 
@@ -203,32 +155,20 @@ printf("______________________________________________\n");
 }
 close(fd);
 
-char *message=(char*)malloc(strlen("Listed hunt: ")+strlen(hunt_id)+2);
-if(message==NULL){
-perror("malloc message list");
-free(file_path);
-exit(1);
-}
-sprintf(message,"Listed hunt: %s",hunt_id);
+char message[256];
+snprintf(message,sizeof(message),"Listed hunt: %s",hunt_id);
 log_operation(hunt_id,message);
-notify_monitor();
-free(message);
-free(file_path);
 }
 
+//Vizualizeaza o comoara dupa ID
 void view_treasure(const char *hunt_id,const char *id_treasure){
 
-char *file_path=(char*)malloc(strlen(hunt_id)+strlen("/treasures.bin")+4);
-if(file_path==NULL){
-perror("error:file in view");
-exit(1);
-}
-sprintf(file_path,"./%s/treasures.bin",hunt_id);
+char file_path[256];
+snprintf(file_path,sizeof(file_path),"./%s/%s",hunt_id,TREASURE_FILE);
 
 int fd=open(file_path,O_RDONLY);
 if(fd==-1){
 perror("error: file open");
-free(file_path);
 exit(1);
 }
 
@@ -251,66 +191,42 @@ if(!found){
 printf("Treasure %s not found in hunt '%s'\n",id_treasure,hunt_id);
 }
 close(fd);
-char *message=(char*)malloc(strlen("View: ")+strlen(hunt_id)+strlen(id_treasure)+2);
-if(message==NULL){
-perror("eroare alocare mesaj");
-free(file_path);
-exit(1);
-}else{
-sprintf(message,"View: %s %s",hunt_id,id_treasure);
+char message[256];
+snprintf(message,sizeof(message),"View: %s %s",hunt_id,id_treasure);
 log_operation(hunt_id,message);
-notify_monitor();
-free(message);
-}
-free(file_path);
 }
 
-void remove_treasure(const char *hunt_id,const char *treasure){
+//Sterge o comoara dupa ID
+void remove_treasure(const char *hunt_id,const char *treasure_id){
 
-char *file_path=(char*)malloc(strlen(hunt_id)+strlen("/treasures.bin")+4);
-char *temporary_path=(char*)malloc(strlen(hunt_id)+strlen("/temporary.bin")+4);
-
-if(file_path==NULL){
-perror("malloc file remove treasure");
-exit(1);
-}
-sprintf(file_path,"./%s/treasures.bin",hunt_id);
-
-if(temporary_path==NULL){
-perror("malloc temporary path");
-free(file_path);
-exit(1);
-}
-sprintf(temporary_path,"./%s/temporary.bin",hunt_id);
+char file_path[256];
+char temp_path[256];
+snprintf(file_path,sizeof(file_path),"./%s/%s",hunt_id,TREASURE_FILE);
+snprintf(temp_path,sizeof(temp_path),"./%s/temp.bin",hunt_id);
 
 int f=open(file_path,O_RDONLY);
 if(f==-1){
 perror("error: f read open");
-free(file_path);
-free(temporary_path);
 exit(1);
 }
 
-int g=open(temporary_path,O_WRONLY|O_CREAT|O_TRUNC,0666);
+int g=open(temp_path,O_WRONLY|O_CREAT|O_TRUNC,0666);
 if(g==-1){
 perror("error: g write open");
 close(f);
-free(file_path);
-free(temporary_path);
 exit(1);
 }
 
 Treasure t;
 int rem=0;
 while(read(f,&t,sizeof(Treasure))==sizeof(Treasure)){
-if(strcmp(t.treasure_id,treasure)==0){
+if(strcmp(t.treasure_id,treasure_id)==0){
 rem=1;
 continue;
 }
 if(write(g,&t,sizeof(Treasure))!=sizeof(Treasure)){
 perror("Eroare la scriere in temporary file");
 close(f);close(g);
-free(file_path);free(temporary_path);
 exit(1);
 }
 }
@@ -318,90 +234,85 @@ close(f);
 close(g);
 
 if(rem==0){
-printf("Treasure %s not found in hunt '%s'\n",treasure,hunt_id);
-unlink(temporary_path); ///stergem fisierul temporar
-free(file_path);
-free(temporary_path);
+printf("Treasure %s not found in hunt '%s'\n",treasure_id,hunt_id);
+unlink(temp_path); ///stergem fisierul temporar
 exit(1);
 }
 if(unlink(file_path)==-1){ //sterge vechiul fisier binar
 perror("error:unlink");
-free(file_path);
-free(temporary_path);
 exit(1);
 }
-if(rename(temporary_path,file_path)==-1){ //muta temp.bin in locul original
+if(rename(temp_path,file_path)==-1){ //muta temp.bin in locul original
 perror("Error:rename");
-free(file_path);
-free(temporary_path);
 exit(1);
 }
 
-printf("Treasure %s removed from hunt '%s'\n",treasure,hunt_id);
-char *message=(char*)malloc(strlen("removed treasure: ")+strlen(hunt_id)+strlen(treasure)+3);
-if(message==NULL){
-perror("eroare alocare mesaj");
-free(file_path);
-free(temporary_path);
-exit(1);
-}else{
-sprintf(message,"removed treasure: %s %s",hunt_id,treasure);
+printf("Treasure %s removed from hunt '%s'\n",treasure_id,hunt_id);
+char message[256];
+snprintf(message,sizeof(message),"Removed treasure: %s %s",hunt_id,treasure_id);
 log_operation(hunt_id,message);
-notify_monitor();
-free(message);
-}
-free(file_path);
-free(temporary_path);
 }
 
+//Stergere completa a unui hunt
 void remove_hunt(const char *hunt_id){
+char file_path[256];
+char dir_path[256];
+char log_path[256];
+char symlink_path[256];
+snprintf(file_path, sizeof(file_path),"./%s/%s", hunt_id, TREASURE_FILE);
+snprintf(log_path, sizeof(log_path),"./%s/%s", hunt_id, LOG_FILE);
+snprintf(symlink_path, sizeof(symlink_path),"%s-%s", LOG_FILE, hunt_id);
+snprintf(dir_path, sizeof(dir_path),"./%s", hunt_id);
 
-char *file_path=(char*)malloc(strlen(hunt_id)+strlen("/treasures.bin")+4);
-char *folder=(char*)malloc(strlen(hunt_id)+4);
 
-if(file_path==NULL){
-perror("eroare alocare in remove hunt file_path");
-exit(1);
-}
-sprintf(file_path,"./%s/treasures.bin",hunt_id);
-
-if(folder==NULL){
-perror("eroare alocare la folder");
-free(file_path);
-exit(1);
-}
-sprintf(folder,"./%s",hunt_id);
-
-//verificam daca treasures.bin exista
-if(access(file_path,F_OK)==0){
-if(unlink(file_path)==-1){
-perror("Error: treasures.bin");
-free(file_path);
-free(folder);
-exit(1);
-}
-}
-
-//stergem folderul
-if(rmdir(folder)==-1){
-perror("Error: rmdir");
-free(file_path);
-free(folder);
-exit(1);
-}
 printf("Hunt '%s' removed\n",hunt_id);
-char *message=(char*)malloc(strlen("Removed hunt: ")+strlen(hunt_id)+2);
-if(message==NULL){
-perror("eroare alocare mesaj");
-free(file_path);
-free(folder);
-exit(1);
-}else{
-sprintf(message,"Removed hunt: %s",hunt_id);
+char message[256];
+snprintf(message,sizeof(message),"Removed hunt: %s",hunt_id);
 log_operation(hunt_id,message);
-notify_monitor();
-free(message);
+unlink(file_path);
+unlink(log_path);
+unlink(symlink_path);
+
+if(rmdir(dir_path)==-1){
+perror("rmdir");
+exit(1);
 }
-free(file_path);
-free(folder);
 }
+/*
+int main(int argc, char *argv[]) {
+      if (argc < 3) {
+        fprintf(stderr, "Usage:\n"
+                        "  %s --add <hunt_id>\n"
+                        "  %s --list <hunt_id>\n"
+                        "  %s --view <hunt_id> <treasure_id>\n"
+                        "  %s --remove_treasure <hunt_id> <treasure_id>\n"
+                        "  %s --remove_hunt <hunt_id>\n", argv[0], argv[0], argv[0], argv[0], argv[0]);
+        return 1;
+    }
+
+    if (strcmp(argv[1], "--add") == 0) {
+        add_treasure(argv[2]);
+    } else if (strcmp(argv[1], "--list") == 0) {
+        list_treasure(argv[2]);
+    } else if (strcmp(argv[1], "--view") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "Usage: %s --view <hunt_id> <treasure_id>\n", argv[0]);
+            return 1;
+        }
+        view_treasure(argv[2], argv[3]);
+    } else if (strcmp(argv[1], "--remove_treasure") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "Usage: %s --remove_treasure <hunt_id> <treasure_id>\n", argv[0]);
+            return 1;
+        }
+        remove_treasure(argv[2], argv[3]);
+    } else if (strcmp(argv[1], "--remove_hunt") == 0) {
+        remove_hunt(argv[2]);
+    } else {
+        fprintf(stderr, "Unknown command: %s\n", argv[1]);
+        return 1;
+    }
+
+    return 0;
+}
+*/
